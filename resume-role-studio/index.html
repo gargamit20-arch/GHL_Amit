@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Resume Role Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip" href="#studio-form">Skip to the resume form</a>
+  <header class="mast">
+    <p class="eyebrow">Resume workflow</p>
+    <h1>Fit the role. Stay ATS-safe.</h1>
+    <p class="lede">Choose a target role, upload a Word resume, and download a Word file shaped to that role’s best-fit suite. The wording is cleaned for applicant tracking systems. Skills you never mentioned are not added.</p>
+  </header>
+
+  <main>
+    <form id="studio-form" class="panel composer">
+      <ol class="steps">
+        <li>Choose the role</li>
+        <li>Upload the Word resume</li>
+        <li>Download the Word file</li>
+      </ol>
+
+      <div class="field">
+        <label for="role">Target role</label>
+        <select id="role" name="role"></select>
+        <p class="hint">The suite is the keyword set, section order, and phrasing that fit this role.</p>
+      </div>
+
+      <div class="field" id="custom-role-field" hidden>
+        <label for="custom-role">Role title</label>
+        <input id="custom-role" name="custom-role" type="text" maxlength="80" placeholder="e.g. Revenue Operations Manager" />
+      </div>
+
+      <div class="field">
+        <label for="job-description">Job description <span>optional</span></label>
+        <textarea id="job-description" name="job-description" rows="5" placeholder="Paste a posting to add its tools and requirements to the suite."></textarea>
+      </div>
+
+      <div class="field">
+        <div class="label-row">
+          <label for="resume">Resume</label>
+          <label class="file-btn">
+            Upload Word
+            <input id="resume-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,.md,text/plain" />
+          </label>
+        </div>
+        <textarea id="resume" name="resume" rows="8" required placeholder="Upload a .docx file, or paste the resume. The optimized copy downloads as Word."></textarea>
+        <p class="hint" id="form-status" role="status"></p>
+      </div>
+
+      <div class="composer-footer">
+        <div class="actions">
+          <button type="submit" class="primary">Review and optimize</button>
+          <button type="button" id="load-example" class="ghost">Load example</button>
+        </div>
+        <p class="privacy">Your resume stays in this browser. Nothing is uploaded.</p>
+      </div>
+    </form>
+
+    <section id="results" class="panel results" aria-live="polite">
+      <div class="empty">
+        <p class="eyebrow">Waiting for a resume</p>
+        <h2>The review lands here.</h2>
+        <p>You will get an ATS score before and after, the suite for the role you picked, gaps that still need your words, and a Word file of the optimized resume.</p>
+      </div>
+    </section>
+  </main>
+
+  <pre id="print-sheet" class="print-sheet"></pre>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
