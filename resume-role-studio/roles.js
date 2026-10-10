@@ -232,12 +232,12 @@ export const ROLES = [
       { label: "Product direction", terms: ["roadmap", "product strategy", "prioritization"] },
       { label: "Stakeholders", terms: ["stakeholders", "cross-functional"] },
       { label: "Outcomes", terms: ["KPI", "OKR", "product metrics", "adoption"] },
-      { label: "Delivery", terms: ["Agile", "Scrum", "roadmap", "backlog"] },
+      { label: "Delivery", terms: ["Agile", "Scrum", "backlog", "sprint"] },
     ],
     nice: [
       { label: "Discovery", terms: ["user research", "discovery", "customer interviews"] },
       { label: "Experimentation", terms: ["A/B testing", "experimentation"] },
-      { label: "Delivery tools", terms: ["Jira", "roadmap"] },
+      { label: "Delivery tools", terms: ["Jira", "Confluence"] },
       { label: "Data", terms: ["SQL", "analytics"] },
     ],
   }),
@@ -431,11 +431,47 @@ const SOFT_TERMS = new Set([
   "time management",
 ]);
 
+const AMBIGUOUS_TOOLS = new Set(["excel", "react", "spark", "rest", "express", "java", "go"]);
+
+function escapeTerm(term) {
+  return String(term).trim().split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+}
+
+function bounded(term) {
+  const body = escapeTerm(term);
+  return new RegExp(`(?<![A-Za-z0-9+#.&/])${body}(?![A-Za-z0-9+#.&/])`);
+}
+
+function isMiddleInitial(text, term) {
+  if (!/^[A-Za-z]$/.test(term)) return false;
+  return new RegExp(`\\b[A-Z][A-Za-z.'-]+\\s+${term}\\.?\\s+[A-Z][A-Za-z.'-]+`).test(text);
+}
+
+function isAmpersandPair(text, term) {
+  if (!/^[A-Za-z]{1,2}$/.test(term)) return false;
+  return new RegExp(`(?:^|[^A-Za-z0-9])${term}\\s*&\\s*[A-Za-z]`).test(text);
+}
+
+function skillListHas(text, term) {
+  return String(text).split(/[\n,;|]/).some((item) => item.trim().toLowerCase() === term.toLowerCase());
+}
+
 export function textHas(text, term) {
   if (!text || !term) return false;
-  const parts = String(term).trim().split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const body = parts.join("\\s+");
-  return new RegExp(`(?<![A-Za-z0-9+#])${body}(?![A-Za-z0-9+#])`, "i").test(text);
+  const raw = String(term).trim();
+  if (!raw) return false;
+  if (/^[A-Za-z]{1,2}$/.test(raw)) {
+    if (isMiddleInitial(text, raw) || isAmpersandPair(text, raw)) return false;
+    const cased = raw.toUpperCase() === raw ? raw : raw.toUpperCase();
+    return bounded(raw).test(text) || (cased !== raw && bounded(cased).test(text));
+  }
+  if (AMBIGUOUS_TOOLS.has(raw.toLowerCase())) {
+    if (bounded(raw).test(text)) return true;
+    const canonical = raw.slice(0, 1).toUpperCase() + raw.slice(1);
+    if (canonical !== raw && bounded(canonical).test(text)) return true;
+    return skillListHas(text, raw);
+  }
+  return new RegExp(`(?<![A-Za-z0-9+#.&/])${escapeTerm(raw)}(?![A-Za-z0-9+#.&/])`, "i").test(text);
 }
 
 export function groupMatched(text, group) {
@@ -453,7 +489,7 @@ function normalizeTitle(value) {
 
 /**
  * Pick a suite from a typed title.
- * Exact or contained titles win. Otherwise a unique token overlap wins.
+ * Exact or contained titles win. Otherwise a unique overlap of at least two tokens wins.
  * A tie returns null so a custom title is not forced onto the wrong suite.
  */
 export function matchRole(title) {
@@ -487,7 +523,7 @@ export function matchRole(title) {
       runner = score;
     }
   }
-  if (!winner || winner.score < 1 || winner.score === runner) return null;
+  if (!winner || winner.score < 2 || winner.score === runner) return null;
   return { role: winner.role, reason: "overlap" };
 }
 

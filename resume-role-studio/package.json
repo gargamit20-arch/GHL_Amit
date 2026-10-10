@@ -1,5 +1,9 @@
 {
   "name": "resume-role-studio",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "start": "py -m http.server 8765",
+    "test": "node --test"
+  }
 }

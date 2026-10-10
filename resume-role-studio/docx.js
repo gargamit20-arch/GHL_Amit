@@ -1,6 +1,8 @@
+import { SECTION_LABELS } from "./roles.js";
+
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
-const SECTION_RE = /^(PROFESSIONAL SUMMARY|CORE SKILLS|PROFESSIONAL EXPERIENCE|PROJECTS|EDUCATION|CERTIFICATIONS|AWARDS)$/;
+const SECTION_RE = new RegExp(`^(?:${Object.values(SECTION_LABELS).map((label) => label.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})$`);
 
 function concat(parts) {
   const size = parts.reduce((total, part) => total + part.length, 0);
@@ -163,9 +165,16 @@ function decodeXml(value) {
     .replace(/&amp;/g, "&");
 }
 
+function stripRevisions(xml) {
+  return xml
+    .replace(/<w:del\b[\s\S]*?<\/w:del>/g, "")
+    .replace(/<w:moveFrom\b[\s\S]*?<\/w:moveFrom>/g, "")
+    .replace(/<w:delText\b[\s\S]*?<\/w:delText>/g, "");
+}
+
 function textFromParagraph(chunk) {
   const end = chunk.indexOf("</w:p>");
-  const body = end === -1 ? chunk : chunk.slice(0, end);
+  const body = stripRevisions(end === -1 ? chunk : chunk.slice(0, end));
   const bullet = /<w:numPr[\s/>]/.test(body);
   let text = "";
   const pattern = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\b[^>]*\/>|<w:br\b[^>]*\/>|<w:cr\b[^>]*\/>/g;
@@ -193,19 +202,32 @@ function xmlPartToLines(xml) {
   return lines;
 }
 
+function isHeaderContact(line) {
+  return /@|https?:\/\/|www\.|(?:[a-z0-9-]+\.)+(?:com|io|dev|me|org|net|co)\b|\+\d|\(\d{2,4}\)/i.test(line);
+}
+
 export async function docxToText(buffer) {
   const files = await unzip(buffer);
-  const names = [...files.keys()].filter((name) => /word\/(document|header\d*|footer\d*)\.xml$/i.test(name));
-  names.sort((left, right) => Number(left.endsWith("document.xml")) - Number(right.endsWith("document.xml")));
-  if (!names.some((name) => name.endsWith("document.xml"))) {
-    throw new Error("This Word file has no document text.");
-  }
-  const lines = [];
-  for (const name of names) {
+  const documentName = [...files.keys()].find((name) => /word\/document\.xml$/i.test(name));
+  if (!documentName) throw new Error("This Word file has no document text.");
+  const bodyLines = xmlPartToLines(new TextDecoder("utf-8").decode(files.get(documentName)));
+  const seen = new Set(bodyLines.map((line) => line.trim().toLowerCase()).filter(Boolean));
+  const headerContacts = [];
+  const sideNames = [...files.keys()].filter((name) => /word\/(?:header|footer)\d*\.xml$/i.test(name)).sort();
+  for (const name of sideNames) {
     const xml = new TextDecoder("utf-8").decode(files.get(name));
-    lines.push(...xmlPartToLines(xml));
+    for (const line of xmlPartToLines(xml)) {
+      const key = line.trim().toLowerCase();
+      if (!key || seen.has(key) || !isHeaderContact(line)) continue;
+      seen.add(key);
+      headerContacts.push(line.trim());
+    }
   }
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (headerContacts.length) {
+    const insertAt = bodyLines.findIndex((line) => line.trim());
+    bodyLines.splice(insertAt + 1, 0, ...headerContacts);
+  }
+  return bodyLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function xmlText(value) {
@@ -251,12 +273,19 @@ function isJobMeta(line) {
   return /\b(?:19|20)\d{2}\b/.test(line) && /[|-]|\bPresent\b/i.test(line);
 }
 
+function isSectionHeading(line) {
+  if (SECTION_RE.test(line)) return true;
+  if (line.length < 3 || line.length > 48 || /[a-z]/.test(line) || !/[A-Z]/.test(line)) return false;
+  if (/^[-*•]|\d/.test(line)) return false;
+  return /summary|skill|experience|education|project|certif|award|qualif|highlight|detail|publication|volunteer|objective|profile|employment|competenc|language|interest|reference|training|leadership|achievement/i.test(line);
+}
+
 function kindOf(line, index, next) {
-  if (SECTION_RE.test(line)) return "section";
-  if (/^[-*•]\s+/.test(line)) return "bullet";
   if (index === 0) return "name";
   if (index === 1 && /@|\|/.test(line)) return "contact";
-  if (index === 2 && line.length <= 80) return "role";
+  if (index === 2 && line.length <= 80 && !isSectionHeading(line)) return "role";
+  if (isSectionHeading(line)) return "section";
+  if (/^[-*•]\s+/.test(line)) return "bullet";
   if (next && isJobMeta(next) && line.length <= 80 && !line.includes("|")) return "job";
   return "body";
 }

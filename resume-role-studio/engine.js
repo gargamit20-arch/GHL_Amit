@@ -8,7 +8,7 @@ import {
 } from "./roles.js";
 
 const SECTION_ALIASES = [
-  { id: "summary", titles: ["professional summary", "summary", "profile", "professional profile", "about", "about me", "objective", "career objective", "professional objective"] },
+  { id: "summary", titles: ["professional summary", "summary", "profile", "professional profile", "about", "about me", "objective", "career objective", "professional objective", "summary of qualifications", "qualifications summary", "career summary", "executive summary"] },
   { id: "skills", titles: ["skills", "technical skills", "core skills", "core competencies", "competencies", "technologies", "tools", "technical tools", "skills and tools"] },
   { id: "experience", titles: ["professional experience", "work experience", "experience", "employment", "employment history", "work history", "career history", "relevant experience"] },
   { id: "education", titles: ["education", "academic background", "academics", "education and training"] },
@@ -179,16 +179,54 @@ function isStandardHeading(id, line) {
   return (STANDARD_HEADINGS[id] || []).includes(name);
 }
 
+const SECTION_WORD = /summary|skill|experience|education|project|certif|award|qualif|objective|profile|employment|competenc|highlight|publication|volunteer|activit|affiliat|language|interest|reference|training|leadership|achievement/i;
+
+function looksLikeCustomHeading(line, next) {
+  const raw = line.trim();
+  if (raw.length < 3 || raw.length > 48) return false;
+  if (/^[-*•]|\d+[.)]\s|,|;|@|https?:|\|/.test(raw)) return false;
+  const name = raw.replace(/:$/, "").trim();
+  if (/[.!?]|\d/.test(name)) return false;
+  const letters = name.replace(/[^A-Za-z]/g, "");
+  if (letters.length < 3) return false;
+  const words = name.split(/\s+/);
+  if (words.length > 6) return false;
+  const caps = letters === letters.toUpperCase();
+  const sectionShaped = SECTION_WORD.test(name) || raw.endsWith(":");
+  if (!caps && !sectionShaped) return false;
+  const personShaped = words.length >= 2 && words.every((word) => /^[A-Za-z][A-Za-z.'-]*$/.test(word));
+  if (personShaped && !sectionShaped) return false;
+  if (/\b(?:19|20)\d{2}\b|\||@/.test(next || "")) return false;
+  if (!next) return sectionShaped;
+  if (/^(?:[-*•]|\d+[.)])\s/.test(next) || headerId(next)) return true;
+  if (sectionShaped) return true;
+  return /[.!?]/.test(next) || next.split(/\s+/).length > 8;
+}
+
+function customId(line) {
+  const slug = line.trim().replace(/:$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `custom:${slug || "section"}`;
+}
+
 function parseSections(text) {
   const lines = text.split("\n");
   const preamble = [];
   const sections = [];
   let current = null;
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const next = lines.slice(index + 1).find((item) => item.trim())?.trim() || "";
     const id = headerId(line);
-    if (id) {
-      current = { id, rawHeading: line.trim(), lines: [], standard: isStandardHeading(id, line) };
+    const custom = !id && looksLikeCustomHeading(line, next);
+    if (id || custom) {
+      current = {
+        id: id || customId(line),
+        rawHeading: line.trim().replace(/:$/, ""),
+        lines: [],
+        standard: id ? isStandardHeading(id, line) : false,
+        custom,
+      };
       sections.push(current);
       continue;
     }
@@ -207,25 +245,46 @@ function findEmail(text) {
 }
 
 function findPhone(text) {
-  const match = text.match(/(?:\+\d{1,3}[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]\d{4}/);
-  return match?.[0] || "";
+  const matches = String(text).match(/\+?\d[\d\s().-]{8,}\d/g) || [];
+  for (const match of matches) {
+    const groups = match.match(/\d+/g) || [];
+    const digits = groups.join("");
+    if (digits.length < 10 || digits.length > 15) continue;
+    const dateLike = groups.every((group) => /^(?:19|20)\d{2}$/.test(group) || /^(?:0?[1-9]|1[0-2])$/.test(group));
+    if (dateLike) continue;
+    return match.trim();
+  }
+  return "";
 }
 
 function findLinks(text) {
-  const links = [];
-  const linkedin = text.match(/linkedin\.com\/in\/[A-Za-z0-9_-]+/i)?.[0];
-  const github = text.match(/github\.com\/[A-Za-z0-9_-]+/i)?.[0];
-  if (linkedin) links.push(linkedin.replace(/^https?:\/\//i, ""));
-  if (github) links.push(github.replace(/^https?:\/\//i, ""));
-  return links;
+  const found = [];
+  const pattern = /(?:https?:\/\/[^\s|,]+|www\.[^\s|,]+|(?:[a-z0-9-]+\.)+(?:com|io|dev|me|org|net|co)\/[^\s|,]+)/gi;
+  for (const match of String(text).matchAll(pattern)) {
+    const url = match[0].replace(/^https?:\/\//i, "").replace(/[),.;]+$/g, "");
+    if (url && !found.some((item) => item.toLowerCase() === url.toLowerCase())) found.push(url);
+    if (found.length === 4) break;
+  }
+  return found;
 }
 
-function findLocation(lines) {
+function matchLocation(lines) {
+  const pattern = /\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,2}),\s*(?!Present\b|Current\b)([A-Z]{2}|[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\b/g;
   for (const line of lines) {
-    const match = line.match(/\b[A-Z][a-zA-Z.]+(?:\s+[A-Z][a-zA-Z.]+)*,\s*[A-Z]{2}\b/);
-    if (match && match[0].length < 40) return match[0].trim();
+    if (/university|college|school|bachelor|master|\bb\.a\b|\bb\.s\b|\bm\.a\b|\bph\.d\b/i.test(line) && !/@|\|/.test(line)) continue;
+    for (const match of line.matchAll(pattern)) {
+      if (match[0].length > 48 || /\d/.test(match[0])) continue;
+      if (/^(?:present|current|january|february|march|april|may|june|july|august|september|october|november|december)$/i.test(match[2])) continue;
+      return match[0].trim();
+    }
   }
   return "";
+}
+
+function findLocation(text) {
+  const lines = String(text).split("\n");
+  const preferred = lines.filter((line, index) => index < 8 || /@|\|/.test(line));
+  return matchLocation(preferred) || matchLocation(lines);
 }
 
 function tidyName(name) {
@@ -252,7 +311,7 @@ function detectName(preamble) {
 
 function estimateYears(experienceText) {
   const now = new Date().getFullYear();
-  const rangeRe = /\b((?:19|20)\d{2})\b\s*(?:-|to)\s*(?:[A-Za-z.]+\s+){0,2}((?:19|20)\d{2}|present|current|now)\b/gi;
+  const rangeRe = /\b(?:(?:0?[1-9]|1[0-2])[\/.-])?((?:19|20)\d{2})\b\s*(?:-|to)\s*(?:[A-Za-z.]+\s+){0,2}(?:(?:0?[1-9]|1[0-2])[\/.-])?((?:19|20)\d{2}|present|current|now)\b/gi;
   let sum = 0;
   let minStart = Infinity;
   let maxEnd = 0;
@@ -275,21 +334,56 @@ function estimateYears(experienceText) {
   return years;
 }
 
+const NOUN_AFTER_GERUND = new Set([
+  "indicator", "indicators", "program", "programs", "material", "materials",
+  "session", "sessions", "course", "courses", "manual", "manuals", "guide", "guides",
+  "document", "documents", "curriculum", "module", "modules",
+]);
+
+const TO_ROLE_GERUNDS = new Set(["reporting", "leading", "assisting", "helping"]);
+
+function gerundPast(word) {
+  return GERUNDS[String(word || "").toLowerCase().replace(/[^a-z]/g, "")] || "";
+}
+
+function gerundIsVerb(first, second) {
+  const verb = first.toLowerCase().replace(/[^a-z]/g, "");
+  if (!GERUNDS[verb]) return false;
+  const next = String(second || "").toLowerCase().replace(/[^a-z]/g, "");
+  if (NOUN_AFTER_GERUND.has(next)) return false;
+  if (next === "to" && TO_ROLE_GERUNDS.has(verb)) return false;
+  return true;
+}
+
 function polishGerunds(sentence) {
-  let next = sentence.trim();
-  next = next.replace(/^(\w+)/, (word) => (GERUNDS[word.toLowerCase()] ? GERUNDS[word.toLowerCase()] : word));
-  next = next.replace(/\band\s+(\w+)\b/gi, (full, word) => {
-    const past = GERUNDS[word.toLowerCase()];
-    return past ? `and ${past}` : full;
-  });
-  return next;
+  const words = sentence.trim().split(/\s+/);
+  if (words.length && gerundIsVerb(words[0], words[1])) {
+    const past = gerundPast(words[0]);
+    if (past) words[0] = past;
+  }
+  for (let index = 0; index < words.length - 1; index += 1) {
+    if (!/^and$/i.test(words[index])) continue;
+    if (!gerundIsVerb(words[index + 1], words[index + 2])) continue;
+    const past = gerundPast(words[index + 1]);
+    if (past) words[index + 1] = past;
+  }
+  return words.join(" ");
+}
+
+function startsWithAction(text) {
+  const first = String(text).trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z]/g, "") || "";
+  return Boolean(GERUNDS[first] || ACTION_VERBS.has(first));
 }
 
 function rewriteBullet(raw) {
   let text = cleanInline(raw.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, ""));
   const original = text;
   text = text.replace(/^(?:i am|i'm|i)\s+/i, "");
-  text = text.replace(/^(?:i was responsible for|i am responsible for|responsible for|duties included|duties include|tasked with|my duties included)\s+/i, "");
+  const duty = text.match(/^(?:i was responsible for|i am responsible for|responsible for|duties included|duties include|tasked with|my duties included)\s+/i);
+  if (duty) {
+    const rest = text.slice(duty[0].length);
+    if (startsWithAction(rest)) text = rest;
+  }
   text = text.replace(/^(?:helped with|assisted with|assisted in)\s+/i, "supported ");
   text = polishGerunds(text);
   text = text.replace(/\s+/g, " ").trim();
@@ -323,7 +417,7 @@ function processBody(sectionId, lines) {
       if (output.length && output[output.length - 1] !== "") output.push("");
       continue;
     }
-    if ((sectionId === "experience" || sectionId === "projects") && isBullet(line)) {
+    if (sectionId !== "education" && isBullet(line)) {
       const rewritten = rewriteBullet(line);
       bulletCount += 1;
       if (/\d/.test(rewritten.text)) metricCount += 1;
@@ -346,16 +440,19 @@ function processBody(sectionId, lines) {
   };
 }
 
-function splitSkills(text) {
+function displaySkill(skill, suite) {
+  const terms = [...(suite?.must || []), ...(suite?.nice || [])].flatMap((group) => group.terms);
+  return terms.find((term) => term.toLowerCase() === skill.toLowerCase()) || skill;
+}
+
+function splitSkills(text, suite) {
   const chunks = text
     .split(/\n|•|\||,|;|\/(?![a-z])/i)
     .map((part) => cleanInline(part).replace(/^- /, "").replace(/\.$/, ""))
     .filter((part) => part.length >= 2 && part.length <= 40 && part.split(" ").length <= 5);
   const unique = [];
   for (const skill of chunks) {
-    const tidy = skill === skill.toLowerCase() && skill.length > 3
-      ? skill.charAt(0).toUpperCase() + skill.slice(1)
-      : skill;
+    const tidy = displaySkill(skill, suite);
     if (unique.some((item) => item.toLowerCase() === tidy.toLowerCase())) continue;
     unique.push(tidy);
   }
@@ -363,7 +460,7 @@ function splitSkills(text) {
 }
 
 function orderSkills(skills, suite, sourceText) {
-  const pool = skills.length ? skills : inferSkills(sourceText, suite);
+  const pool = skills.length ? skills : inferSkills(sourceText, suite).map((skill) => displaySkill(skill, suite));
   const rank = (skill) => {
     const mustIndex = suite.must.findIndex((group) => group.terms.some((term) => textHas(skill, term) || textHas(term, skill)));
     if (mustIndex >= 0) return mustIndex;
@@ -394,24 +491,27 @@ function formatSkills(skills) {
   return lines.join("\n");
 }
 
-function joinList(items) {
-  if (items.length === 0) return "";
-  if (items.length === 1) return items[0];
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+function cleanProse(text) {
+  return String(text || "")
+    .split(/\n+/)
+    .flatMap((paragraph) => paragraph.split(/(?<=[.!?])\s+/))
+    .map((sentence) => {
+      let next = cleanInline(sentence).replace(/^(?:i am|i'm|i)\s+/i, "");
+      if (!next) return "";
+      next = next.charAt(0).toUpperCase() + next.slice(1);
+      if (!/[.!?]$/.test(next)) next += ".";
+      return next;
+    })
+    .filter(Boolean)
+    .join(" ");
 }
 
-function buildSummary(roleTitle, years, matchedTerms, evidence) {
-  const yearClause = years ? ` with about ${years} years of experience shown in the roles below` : "";
-  const skillClause = matchedTerms.length ? `, grounded in ${joinList(matchedTerms.slice(0, 3))}` : "";
-  let summary = `${roleTitle} profile${yearClause}${skillClause}.`;
-  if (evidence) {
-    const sentence = evidence.length > 220 ? `${evidence.slice(0, 217).replace(/\s+\S*$/, "")}.` : evidence;
-    if (!summary.toLowerCase().includes(sentence.slice(0, 40).toLowerCase())) {
-      summary = `${summary} ${sentence}`;
-    }
-  }
-  return summary;
+function buildSummary(original, evidence) {
+  const cleaned = cleanProse(original);
+  if (cleaned) return cleaned;
+  if (!evidence) return "";
+  const sentence = evidence.length > 220 ? `${evidence.slice(0, 217).replace(/\s+\S*$/, "")}` : evidence.replace(/\.$/, "");
+  return `${sentence}.`;
 }
 
 function bestEvidence(experienceText) {
@@ -466,11 +566,11 @@ function assess(text) {
   const email = findEmail(text);
   const phone = findPhone(text);
   const links = findLinks(text);
-  const location = findLocation(text.split("\n"));
+  const location = findLocation(text);
   const emoji = (text.match(/\p{Extended_Pictographic}/gu) || []).length;
   const tableLikely = text.split("\n").some((line) => (line.match(/\|/g) || []).length >= 4 && !line.includes("@"));
   const firstPerson = text.split("\n").filter((line) => isBullet(line) && /\b(I|my|me|mine|I'm)\b/.test(line)).length;
-  const noise = /\[(?:photo|image|picture|chart|table)\]|profile photo|headshot|^page \d+/im.test(text);
+  const noise = text.split("\n").some((line) => isNoiseLine(line));
 
   let bulletCount = 0;
   let strongCount = 0;
@@ -563,22 +663,71 @@ function roleFit(must, nice) {
   return { score, mustMatched, mustTotal: must.length, niceMatched, niceTotal: nice.length };
 }
 
+function isNoiseLine(line) {
+  const trimmed = line.trim();
+  if (/^page \d+\b/i.test(trimmed)) return "page";
+  if (/^\[(?:photo|image|picture|chart|table)\]$/i.test(trimmed)) return "photo";
+  if (/^(?:profile photo|headshot)\b[:\s-]*$/i.test(trimmed)) return "photo";
+  return "";
+}
+
 function dropNoise(text) {
   const kept = [];
   let photos = 0;
   let pages = 0;
   for (const line of text.split("\n")) {
-    if (/^page \d+\b/i.test(line.trim())) {
+    const kind = isNoiseLine(line);
+    if (kind === "page") {
       pages += 1;
       continue;
     }
-    if (/\[(?:photo|image|picture|chart|table)\]|profile photo|headshot/i.test(line)) {
+    if (kind === "photo") {
       photos += 1;
       continue;
     }
     kept.push(line);
   }
   return { text: kept.join("\n"), photos, pages };
+}
+
+function samePerson(line, name) {
+  return Boolean(name) && tidyName(line).toLowerCase() === name.toLowerCase();
+}
+
+function isContactLine(line) {
+  if (/@|https?:\/\/|www\.|(?:[a-z0-9-]+\.)+(?:com|io|dev|me|org|net|co)\b|\+\d|\(\d{2,4}\)|\|/i.test(line)) return true;
+  return Boolean(matchLocation([line]));
+}
+
+function contactFromPreamble(preamble, name) {
+  const lines = String(preamble || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  const kept = [];
+  const prose = [];
+  for (const line of lines) {
+    if (samePerson(line, name)) continue;
+    if (isContactLine(line)) kept.push(cleanInline(line));
+    else prose.push(line);
+  }
+  const contact = [];
+  for (const line of kept) {
+    if (!contact.some((item) => item.toLowerCase() === line.toLowerCase())) contact.push(line);
+  }
+  return { contact: contact.join(" | "), prose: prose.join("\n") };
+}
+
+function looksLikeLooseRole(text) {
+  return /\b(?:19|20)\d{2}\b/.test(text) || /^\s*(?:[-*•]|\d+[.)])\s+/m.test(text);
+}
+
+function mergeBody(previous, next) {
+  if (!previous) return next;
+  return {
+    text: [previous.text, next.text].filter(Boolean).join("\n\n"),
+    bulletChanges: [...previous.bulletChanges, ...next.bulletChanges],
+    weakLeft: previous.weakLeft + next.weakLeft,
+    bulletCount: previous.bulletCount + next.bulletCount,
+    metricCount: previous.metricCount + next.metricCount,
+  };
 }
 
 export function optimizeResume({ roleId, customRole, jobDescription, resumeText }) {
@@ -601,46 +750,71 @@ export function optimizeResume({ roleId, customRole, jobDescription, resumeText 
   const email = findEmail(sourceText);
   const phone = findPhone(sourceText);
   const links = findLinks(sourceText);
-  const location = findLocation(sourceText.split("\n"));
-  const contact = [location, email, phone, ...links].filter(Boolean).join(" | ");
+  const identity = contactFromPreamble(parsed.preamble, name);
+  const contactExtras = [];
+  if (email && !identity.contact.toLowerCase().includes(email.toLowerCase())) contactExtras.push(email);
+  if (phone && !identity.contact.includes(phone)) contactExtras.push(phone);
+  for (const link of links) {
+    if (!identity.contact.toLowerCase().includes(link.toLowerCase())) contactExtras.push(link);
+  }
+  const fallbackContact = [findLocation(sourceText), email, phone, ...links].filter(Boolean).join(" | ");
+  const contact = identity.contact
+    ? [identity.contact, ...contactExtras].filter(Boolean).join(" | ")
+    : fallbackContact;
 
   const processed = new Map();
+  const extras = [];
   let bulletRewrites = 0;
   let weakLeft = 0;
   let bulletCount = 0;
   let metricCount = 0;
   const headingRenames = [];
 
-  for (const section of parsed.sections) {
-    const body = processBody(section.id, section.lines);
-    processed.set(section.id, body);
+  const absorb = (body) => {
     bulletRewrites += body.bulletChanges.length;
     weakLeft += body.weakLeft;
     bulletCount += body.bulletCount;
     metricCount += body.metricCount;
+  };
+
+  for (const section of parsed.sections) {
+    const body = processBody(section.id, section.lines);
+    absorb(body);
+    if (section.custom) {
+      const existing = extras.find((item) => item.id === section.id);
+      if (existing) existing.body = mergeBody(existing.body, body);
+      else extras.push({ id: section.id, heading: section.rawHeading, body });
+      continue;
+    }
+    processed.set(section.id, mergeBody(processed.get(section.id), body));
     const label = SECTION_LABELS[section.id];
     if (label && section.rawHeading.replace(/:$/, "").trim().toLowerCase() !== label.toLowerCase()) {
       headingRenames.push(section.rawHeading.replace(/:$/, ""));
     }
   }
 
-  const experienceBody = processed.get("experience")?.text || "";
+  let originalSummary = processed.get("summary")?.text || "";
+  const hadSummary = Boolean(originalSummary) || Boolean(identity.prose && !looksLikeLooseRole(identity.prose));
+  if (identity.prose && looksLikeLooseRole(identity.prose)) {
+    const body = processBody("experience", identity.prose.split("\n"));
+    absorb(body);
+    extras.unshift({ id: "custom:preamble", heading: "Additional details", body });
+  } else if (identity.prose) {
+    originalSummary = [identity.prose, originalSummary].filter(Boolean).join("\n");
+  }
+
+  const experienceBody = [processed.get("experience")?.text || "", ...extras.map((item) => item.body.text)].filter(Boolean).join("\n");
   const years = estimateYears(experienceBody);
   const skillsSource = processed.get("skills")?.text || "";
-  const listedSkills = splitSkills(skillsSource);
+  const listedSkills = splitSkills(skillsSource, suite);
   const skills = orderSkills(listedSkills, suite, sourceText);
   const skillsCreated = !processed.has("skills") && skills.length > 0;
 
   const resumeForMatch = [sourceText, skills.join(" ")].join("\n");
   const must = annotateGroups(resumeForMatch, suite.must);
   const nice = annotateGroups(resumeForMatch, suite.nice);
-  const matchedTerms = must.filter((group) => group.matched).map((group) => {
-    const skill = skills.find((item) => group.terms.some((term) => textHas(item, term) || textHas(term, item)));
-    return skill || group.matchedTerm;
-  });
   const evidence = bestEvidence(experienceBody);
-  const hadSummary = processed.has("summary");
-  const summary = buildSummary(suite.title, years, matchedTerms, evidence);
+  const summary = buildSummary(originalSummary, evidence);
 
   const blocks = [];
   if (name) blocks.push(name);
@@ -648,10 +822,8 @@ export function optimizeResume({ roleId, customRole, jobDescription, resumeText 
   blocks.push(suite.title.slice(0, 80));
   blocks.push("");
 
-  const emitted = new Set();
   const pushSection = (id, body) => {
     if (!body) return;
-    emitted.add(id);
     blocks.push(SECTION_LABELS[id].toUpperCase());
     blocks.push(body);
     blocks.push("");
@@ -669,11 +841,10 @@ export function optimizeResume({ roleId, customRole, jobDescription, resumeText 
     pushSection(id, processed.get(id)?.text || "");
   }
 
-  for (const section of parsed.sections) {
-    if (emitted.has(section.id) || SECTION_LABELS[section.id]) continue;
-    const body = processed.get(section.id)?.text || "";
+  for (const extra of extras) {
+    const body = extra.body?.text || "";
     if (!body) continue;
-    blocks.push(section.rawHeading.replace(/:$/, "").toUpperCase());
+    blocks.push(extra.heading.replace(/:$/, "").toUpperCase());
     blocks.push(body);
     blocks.push("");
   }
@@ -683,9 +854,13 @@ export function optimizeResume({ roleId, customRole, jobDescription, resumeText 
   const fit = roleFit(must, nice);
 
   const changes = [];
-  if (!hadSummary) changes.push("Added a professional summary from facts already in the resume.");
-  else changes.push("Replaced the opening profile with a summary aimed at this role, using only facts already in the resume.");
-  changes.push(`Added “${suite.title.slice(0, 80)}” as the target-role headline under your name.`);
+  if (summary && hadSummary) changes.push("Kept your summary and removed first-person openers. It does not rename you to the target role.");
+  else if (summary) changes.push("Added a summary from a result already written in the resume. It does not assign the target title.");
+  changes.push(`Placed “${suite.title.slice(0, 80)}” under your name as the role you are applying for. It is not taken from a past job.`);
+  if (years) changes.push(`Experience dates span about ${years} years.`);
+  if (extras.length) {
+    changes.push(`Kept ${extras.length} section${extras.length === 1 ? "" : "s"} that did not use a standard heading.`);
+  }
   if (headingRenames.length) {
     changes.push(`Renamed ${headingRenames.length} section heading${headingRenames.length === 1 ? "" : "s"} to standard labels parsers expect.`);
   }

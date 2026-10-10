@@ -26,9 +26,35 @@
       </ol>
 
       <div class="field">
+        <p class="filter-label" id="role-filter-label">Filter roles</p>
+        <div class="filters">
+          <input id="role-search" type="search" placeholder="Title, alias, or skill" autocomplete="off" aria-labelledby="role-filter-label" />
+          <div class="advanced" id="role-advanced">
+            <div>
+              <p class="filter-label" id="family-label">Family</p>
+              <div id="family-filters" class="pill-row" role="group" aria-labelledby="family-label"></div>
+            </div>
+            <div>
+              <label class="filter-label" for="skill-filter">Suite contains</label>
+              <input id="skill-filter" type="search" placeholder="SQL, React, Kubernetes…" autocomplete="off" />
+            </div>
+            <div>
+              <p class="filter-label" id="scope-label">Look in</p>
+              <div id="skill-scope" class="pill-row" role="group" aria-labelledby="scope-label">
+                <button type="button" class="pill" data-skill-scope="any" aria-pressed="true">Entire suite</button>
+                <button type="button" class="pill" data-skill-scope="must" aria-pressed="false">Must-have only</button>
+                <button type="button" class="pill" data-skill-scope="nice" aria-pressed="false">Preferred only</button>
+              </div>
+            </div>
+            <div class="filter-meta">
+              <p class="hint" id="role-match-count" aria-live="polite"></p>
+              <button type="button" class="text-btn" id="clear-role-filters">Clear filters</button>
+            </div>
+          </div>
+        </div>
         <label for="role">Target role</label>
         <select id="role" name="role"></select>
-        <p class="hint">The suite is the keyword set, section order, and phrasing that fit this role.</p>
+        <p class="hint">Filters narrow the list. The suite is the keyword set, section order, and phrasing for the role you select.</p>
       </div>
 
       <div class="field" id="custom-role-field" hidden>
@@ -58,7 +84,7 @@
           <button type="submit" class="primary">Review and optimize</button>
           <button type="button" id="load-example" class="ghost">Load example</button>
         </div>
-        <p class="privacy">Your resume stays in this browser. Nothing is uploaded.</p>
+        <p class="privacy">Your resume stays in this browser. Nothing is uploaded. Open this page with <code>npm start</code> from the resume-role-studio folder. Opening the file directly will not run it.</p>
       </div>
     </form>
 
